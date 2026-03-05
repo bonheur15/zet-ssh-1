@@ -289,6 +289,16 @@ class _TerminalPageState extends State<TerminalPage> {
                         onSecondaryTapDown: (details, _) {
                           _showContextMenu(details.globalPosition);
                         },
+                        onKeyEvent: (_, event) {
+                          if (event is KeyDownEvent &&
+                              HardwareKeyboard.instance.isControlPressed &&
+                              !HardwareKeyboard.instance.isShiftPressed &&
+                              event.logicalKey == LogicalKeyboardKey.keyC) {
+                            _terminal.charInput('c'.codeUnitAt(0), ctrl: true);
+                            return KeyEventResult.handled;
+                          }
+                          return KeyEventResult.ignored;
+                        },
                         theme: const TerminalTheme(
                           cursor: Color(0xFF47E6A1),
                           selection: Color(0x553C7EEA),
