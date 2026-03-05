@@ -39,6 +39,9 @@
   - `focus=true`
 - Inter-window `focus_window` method calls are retried after creation to improve Wayland foreground behavior.
 - Shell startup starts after first frame to reduce perceived startup delay.
+- Linux runner now sets `desktop_multi_window_plugin_set_window_created_callback(...)`
+  to call `fl_register_plugins(registry)` for each subwindow engine (fixes
+  `MissingPluginException`/black subwindows for plugins like `window_manager`).
 
 ## Remaining Risk
 - Wayland compositors can enforce focus-stealing prevention; true foreground activation is policy-limited.
