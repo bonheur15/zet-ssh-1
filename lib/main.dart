@@ -267,6 +267,23 @@ class _TerminalPageState extends State<TerminalPage> {
 
     try {
       final executablePath = await _resolveSelfExecutablePath();
+      final isKdeWayland = _isKdeWaylandSession();
+
+      if (isKdeWayland && await File('/usr/bin/kstart5').exists()) {
+        final child = await Process.start(
+          '/usr/bin/kstart5',
+          ['--activate', executablePath],
+          workingDirectory: cwd,
+          mode: ProcessStartMode.detached,
+          environment: {
+            'ZET_SSH_FORCE_FOCUS': '1',
+          },
+        );
+        if (_debugKeys) {
+          _debug('spawned via kstart5 pid=${child.pid} cwd=$cwd');
+        }
+        return;
+      }
 
       final child = await Process.start(
         executablePath,
@@ -283,6 +300,15 @@ class _TerminalPageState extends State<TerminalPage> {
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
+  }
+
+  bool _isKdeWaylandSession() {
+    if (!Platform.isLinux) return false;
+    final desktop = (Platform.environment['XDG_CURRENT_DESKTOP'] ?? '')
+        .toLowerCase();
+    final sessionType = (Platform.environment['XDG_SESSION_TYPE'] ?? '')
+        .toLowerCase();
+    return desktop.contains('kde') && sessionType == 'wayland';
   }
 
   Future<String> _resolveSelfExecutablePath() async {
