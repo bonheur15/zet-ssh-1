@@ -272,10 +272,11 @@ class _TerminalPageState extends State<TerminalPage> {
       if (isKdeWayland && await File('/usr/bin/kstart5').exists()) {
         final child = await Process.start(
           '/usr/bin/kstart5',
-          ['--activate', executablePath],
+          [executablePath],
           workingDirectory: cwd,
           mode: ProcessStartMode.detached,
           environment: {
+            ...Platform.environment,
             'ZET_SSH_FORCE_FOCUS': '1',
           },
         );
