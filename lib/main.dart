@@ -91,6 +91,10 @@ class _TerminalPageState extends State<TerminalPage> {
     if (Platform.isWindows) {
       return 'powershell.exe';
     }
+    if (Platform.isLinux) {
+      // Avoid bash job-control warning with current PTY backend on Linux.
+      return '/bin/sh';
+    }
 
     return Platform.environment['SHELL'] ?? '/bin/bash';
   }
@@ -187,6 +191,7 @@ class _TerminalPageState extends State<TerminalPage> {
     }
 
     final content = Scaffold(
+      backgroundColor: Colors.transparent,
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -197,9 +202,9 @@ class _TerminalPageState extends State<TerminalPage> {
         ),
         child: SafeArea(
           child: Padding(
-            padding: const EdgeInsets.all(14),
+            padding: EdgeInsets.zero,
             child: ClipRRect(
-              borderRadius: BorderRadius.circular(18),
+              borderRadius: BorderRadius.circular(_isDesktop ? 0 : 18),
               child: DecoratedBox(
                 decoration: BoxDecoration(
                   border: Border.all(color: const Color(0xFF1B2B45)),
@@ -307,44 +312,41 @@ class _TopBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      height: 42,
-      padding: const EdgeInsets.symmetric(horizontal: 14),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFF1B2B45))),
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [Color(0xFF121C31), Color(0xFF0C1425)],
+    return DragToMoveArea(
+      child: Container(
+        height: 34,
+        padding: const EdgeInsets.symmetric(horizontal: 12),
+        decoration: const BoxDecoration(
+          border: Border(bottom: BorderSide(color: Color(0xFF1B2B45))),
+          gradient: LinearGradient(
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight,
+            colors: [Color(0xFF121C31), Color(0xFF0C1425)],
+          ),
         ),
-      ),
-      child: Row(
-        children: [
-          _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
-          SizedBox(width: 8),
-          _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
-          SizedBox(width: 8),
-          _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
-          Spacer(),
-          Expanded(
-            child: DragToMoveArea(
-              child: Container(
-                alignment: Alignment.center,
-                child: const Text(
-                  'zet-ssh terminal',
-                  style: TextStyle(
-                    color: Color(0xFFA8B4CF),
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    letterSpacing: 0.4,
-                  ),
+        child: Row(
+          children: [
+            _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
+            const SizedBox(width: 8),
+            _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
+            const SizedBox(width: 8),
+            _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
+            const SizedBox(width: 12),
+            const Expanded(
+              child: Text(
+                'zet-ssh terminal',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  color: Color(0xFFA8B4CF),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  letterSpacing: 0.3,
                 ),
               ),
             ),
-          ),
-          Spacer(),
-          SizedBox(width: 48),
-        ],
+            const SizedBox(width: 56),
+          ],
+        ),
       ),
     );
   }
