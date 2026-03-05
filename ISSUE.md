@@ -42,6 +42,9 @@
 - Linux runner now sets `desktop_multi_window_plugin_set_window_created_callback(...)`
   to call `fl_register_plugins(registry)` for each subwindow engine (fixes
   `MissingPluginException`/black subwindows for plugins like `window_manager`).
+- For multi-window subwindows, `window_manager` initialization is skipped to
+  avoid `AttachMainWindow : main window already exists` conflicts; subwindow
+  close/focus control uses `desktop_multi_window` window controller APIs.
 
 ## Remaining Risk
 - Wayland compositors can enforce focus-stealing prevention; true foreground activation is policy-limited.

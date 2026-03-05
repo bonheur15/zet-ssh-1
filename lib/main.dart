@@ -12,9 +12,9 @@ import 'package:xterm/xterm.dart';
 
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
-  final launchConfig = _LaunchConfig.fromArgs(args);
+  final launchConfig = LaunchConfig.fromArgs(args);
 
-  if (_isDesktop) {
+  if (_isDesktop && !launchConfig.isSubWindow) {
     await windowManager.ensureInitialized();
     await windowManager.setAsFrameless();
     final forceStartupFocus = launchConfig.forceStartupFocus;
@@ -42,7 +42,7 @@ Future<void> main(List<String> args) async {
     });
   }
 
-  runApp(ZetSshApp(initialWorkingDirectory: launchConfig.initialWorkingDirectory));
+  runApp(ZetSshApp(launchConfig: launchConfig));
 }
 
 const _desktopPlatforms = {
@@ -56,11 +56,11 @@ bool get _isDesktop =>
 
 class ZetSshApp extends StatelessWidget {
   const ZetSshApp({
-    required this.initialWorkingDirectory,
+    required this.launchConfig,
     super.key,
   });
 
-  final String initialWorkingDirectory;
+  final LaunchConfig launchConfig;
 
   @override
   Widget build(BuildContext context) {
@@ -76,25 +76,33 @@ class ZetSshApp extends StatelessWidget {
           surface: Color(0xFF0B101D),
         ),
       ),
-      home: TerminalPage(initialWorkingDirectory: initialWorkingDirectory),
+      home: TerminalPage(launchConfig: launchConfig),
     );
   }
 }
 
-class _LaunchConfig {
-  const _LaunchConfig({
+class LaunchConfig {
+  const LaunchConfig({
     required this.initialWorkingDirectory,
     required this.forceStartupFocus,
+    required this.isSubWindow,
+    required this.windowId,
   });
 
   final String initialWorkingDirectory;
   final bool forceStartupFocus;
+  final bool isSubWindow;
+  final int windowId;
 
-  static _LaunchConfig fromArgs(List<String> args) {
+  static LaunchConfig fromArgs(List<String> args) {
     var cwd = Directory.current.path;
     var focus = false;
+    var isSubWindow = false;
+    var windowId = 0;
 
     if (args.length >= 3 && args[0] == 'multi_window') {
+      isSubWindow = true;
+      windowId = int.tryParse(args[1]) ?? 0;
       try {
         final raw = args[2];
         final decoded = jsonDecode(raw);
@@ -113,20 +121,22 @@ class _LaunchConfig {
       }
     }
 
-    return _LaunchConfig(
+    return LaunchConfig(
       initialWorkingDirectory: cwd,
       forceStartupFocus: focus,
+      isSubWindow: isSubWindow,
+      windowId: windowId,
     );
   }
 }
 
 class TerminalPage extends StatefulWidget {
   const TerminalPage({
-    required this.initialWorkingDirectory,
+    required this.launchConfig,
     super.key,
   });
 
-  final String initialWorkingDirectory;
+  final LaunchConfig launchConfig;
 
   @override
   State<TerminalPage> createState() => _TerminalPageState();
@@ -154,6 +164,8 @@ class _TerminalPageState extends State<TerminalPage> {
       print('[zet-ssh] $message');
     }
   }
+
+  bool get _useWindowManager => _isDesktop && !widget.launchConfig.isSubWindow;
 
   @override
   void initState() {
@@ -202,13 +214,13 @@ class _TerminalPageState extends State<TerminalPage> {
       final shellName = shell.split('/').last.toLowerCase();
       _filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
       _debug(
-        'starting shell=$shell args=$shellArgs cwd=${widget.initialWorkingDirectory}',
+        'starting shell=$shell args=$shellArgs cwd=${widget.launchConfig.initialWorkingDirectory}',
       );
 
       final pty = PseudoTerminal.start(
         shell,
         shellArgs,
-        workingDirectory: widget.initialWorkingDirectory,
+        workingDirectory: widget.launchConfig.initialWorkingDirectory,
         environment: {
           ...Platform.environment,
           'TERM': 'xterm-256color',
@@ -323,7 +335,7 @@ class _TerminalPageState extends State<TerminalPage> {
       }
     }
 
-    return widget.initialWorkingDirectory;
+    return widget.launchConfig.initialWorkingDirectory;
   }
 
   Future<void> _openNewTerminalWindow() async {
@@ -356,6 +368,13 @@ class _TerminalPageState extends State<TerminalPage> {
   }
 
   Future<void> _focusThisWindow() async {
+    if (!_useWindowManager) {
+      if (widget.launchConfig.windowId > 0) {
+        await WindowController.fromWindowId(widget.launchConfig.windowId).show();
+      }
+      return;
+    }
+
     for (var i = 0; i < 4; i++) {
       await windowManager.setAlwaysOnTop(true);
       await windowManager.focus();
@@ -403,12 +422,12 @@ class _TerminalPageState extends State<TerminalPage> {
                 child: Column(
                   children: [
                     _TopBar(
-                      onMinimize: _isDesktop
+                      onMinimize: _useWindowManager
                           ? () {
                               unawaited(windowManager.minimize());
                             }
                           : null,
-                      onToggleMaximize: _isDesktop
+                      onToggleMaximize: _useWindowManager
                           ? () {
                               unawaited(() async {
                                 if (await windowManager.isMaximized()) {
@@ -419,11 +438,17 @@ class _TerminalPageState extends State<TerminalPage> {
                               }());
                             }
                           : null,
-                      onClose: _isDesktop
-                          ? () {
-                              unawaited(windowManager.close());
-                            }
-                          : null,
+                      onClose: () {
+                        unawaited(() async {
+                          if (_useWindowManager) {
+                            await windowManager.close();
+                          } else if (widget.launchConfig.windowId > 0) {
+                            await WindowController.fromWindowId(
+                              widget.launchConfig.windowId,
+                            ).close();
+                          }
+                        }());
+                      },
                     ),
                     Expanded(
                       child: TerminalView(
