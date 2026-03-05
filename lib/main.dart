@@ -425,6 +425,7 @@ class _TerminalPageState extends State<TerminalPage> {
                 child: Column(
                   children: [
                     _TopBar(
+                      draggable: _useWindowManager,
                       onMinimize: _useWindowManager
                           ? () {
                               unawaited(windowManager.minimize());
@@ -454,7 +455,13 @@ class _TerminalPageState extends State<TerminalPage> {
                       },
                     ),
                     Expanded(
-                      child: TerminalView(
+                      child: LayoutBuilder(
+                        builder: (context, constraints) {
+                          if (constraints.maxWidth < 80 ||
+                              constraints.maxHeight < 80) {
+                            return const SizedBox.expand();
+                          }
+                          return TerminalView(
                         _terminal,
                         controller: _terminalController,
                         backgroundOpacity: 0,
@@ -540,6 +547,8 @@ class _TerminalPageState extends State<TerminalPage> {
                           searchHitBackgroundCurrent: Color(0xFF47E6A1),
                           searchHitForeground: Color(0xFF08111F),
                         ),
+                          );
+                        },
                       ),
                     ),
                   ],
@@ -551,7 +560,7 @@ class _TerminalPageState extends State<TerminalPage> {
       ),
     );
 
-    if (_isDesktop) {
+    if (_useWindowManager) {
       return DragToResizeArea(child: content);
     }
 
@@ -561,11 +570,13 @@ class _TerminalPageState extends State<TerminalPage> {
 
 class _TopBar extends StatelessWidget {
   const _TopBar({
+    required this.draggable,
     this.onMinimize,
     this.onToggleMaximize,
     this.onClose,
   });
 
+  final bool draggable;
   final VoidCallback? onMinimize;
   final VoidCallback? onToggleMaximize;
   final VoidCallback? onClose;
@@ -585,11 +596,12 @@ class _TopBar extends StatelessWidget {
       ),
       child: Stack(
         children: [
-          const Positioned.fill(
-            child: DragToMoveArea(
-              child: SizedBox.expand(),
+          if (draggable)
+            const Positioned.fill(
+              child: DragToMoveArea(
+                child: SizedBox.expand(),
+              ),
             ),
-          ),
           Positioned.fill(
             child: Row(
               children: [

@@ -48,6 +48,8 @@
   close/focus control uses `desktop_multi_window` window controller APIs.
 - Linux subwindow callback now forces undecorated GTK window chrome for each
   multi-window-created window and applies default size.
+- Subwindow rendering now guards against early `1x1` map constraints to avoid
+  `RenderFlex overflow` during initial hidden/resize phase.
 
 ## Remaining Risk
 - Wayland compositors can enforce focus-stealing prevention; true foreground activation is policy-limited.
