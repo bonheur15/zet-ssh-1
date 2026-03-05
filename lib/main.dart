@@ -74,6 +74,7 @@ class _TerminalPageState extends State<TerminalPage> {
   PseudoTerminal? _pty;
   StreamSubscription<String>? _outputSub;
   bool _bootFailed = false;
+  bool _filterLinuxBashNoise = false;
 
   @override
   void initState() {
@@ -91,25 +92,58 @@ class _TerminalPageState extends State<TerminalPage> {
     if (Platform.isWindows) {
       return 'powershell.exe';
     }
-    if (Platform.isLinux) {
-      // Avoid bash job-control warning with current PTY backend on Linux.
-      return '/bin/sh';
-    }
 
     return Platform.environment['SHELL'] ?? '/bin/bash';
+  }
+
+  List<String> _shellArgsFor(String shellPath) {
+    final shellName = shellPath.split('/').last.toLowerCase();
+    if (shellName.contains('bash') ||
+        shellName.contains('zsh') ||
+        shellName.contains('fish')) {
+      return const ['-i'];
+    }
+    return const [];
   }
 
   void _startShell() {
     try {
       final shell = _resolveShell();
+      final shellArgs = _shellArgsFor(shell);
+      final shellName = shell.split('/').last.toLowerCase();
+      _filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
+
       final pty = PseudoTerminal.start(
         shell,
-        const [],
+        shellArgs,
+        workingDirectory: Directory.current.path,
+        environment: {
+          ...Platform.environment,
+          'TERM': 'xterm-256color',
+          'COLORTERM': 'truecolor',
+        },
       );
 
       _pty = pty;
 
       _outputSub = pty.out.listen((data) {
+        if (_filterLinuxBashNoise) {
+          data = data
+              .replaceAll(
+                RegExp(
+                  r'bash: cannot set terminal process group \(\d+\): Inappropriate ioctl for device\r?\n?',
+                ),
+                '',
+              )
+              .replaceAll(
+                'bash: no job control in this shell\r\n',
+                '',
+              )
+              .replaceAll(
+                'bash: no job control in this shell\n',
+                '',
+              );
+        }
         _terminal.write(data);
       });
 
