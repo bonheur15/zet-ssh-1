@@ -61,6 +61,10 @@ static void my_application_activate(GApplication* application) {
   }
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  // Re-enforce undecorated after plugin registration to ensure window_manager
+  // or other plugins don't override our preference.
+  gtk_window_set_decorated(window, FALSE);
+
   // For subwindow Flutter engines, avoid re-registering window_manager plugin.
   // Registering window_manager in multiple engines causes:
   // "AttachMainWindow : main window already exists."

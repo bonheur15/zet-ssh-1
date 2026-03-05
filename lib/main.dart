@@ -14,32 +14,41 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   final launchConfig = LaunchConfig.fromArgs(args);
 
-  if (_isDesktop && !launchConfig.isSubWindow) {
-    await windowManager.ensureInitialized();
-    await windowManager.setAsFrameless();
-    final forceStartupFocus = launchConfig.forceStartupFocus;
-    const options = WindowOptions(
-      size: Size(1200, 760),
-      minimumSize: Size(900, 560),
-      center: true,
-      backgroundColor: Colors.transparent,
-      title: 'zet-ssh terminal',
-    );
-    await windowManager.waitUntilReadyToShow(options, () async {
-      await windowManager.show();
-      await windowManager.focus();
-      if (forceStartupFocus) {
-        // Retry focus in short bursts to improve foreground behavior on Wayland WMs.
-        for (var i = 0; i < 4; i++) {
-          await windowManager.setAlwaysOnTop(true);
-          await windowManager.focus();
-          await Future<void>.delayed(const Duration(milliseconds: 90));
-          await windowManager.setAlwaysOnTop(false);
-          await Future<void>.delayed(const Duration(milliseconds: 50));
-        }
+  if (_isDesktop) {
+    // On Linux sub-windows, window_manager conflicts with the main window engine.
+    // We handle frameless for Linux sub-windows natively in my_application.cc.
+    final skipWindowManager = Platform.isLinux && launchConfig.isSubWindow;
+
+    if (!skipWindowManager) {
+      await windowManager.ensureInitialized();
+      await windowManager.setAsFrameless();
+      
+      const options = WindowOptions(
+        size: Size(1200, 760),
+        minimumSize: Size(900, 560),
+        center: true,
+        backgroundColor: Colors.transparent,
+        title: 'zet-ssh terminal',
+        titleBarStyle: TitleBarStyle.hidden,
+      );
+
+      await windowManager.waitUntilReadyToShow(options, () async {
+        await windowManager.show();
         await windowManager.focus();
-      }
-    });
+        
+        if (!launchConfig.isSubWindow && launchConfig.forceStartupFocus) {
+          // Retry focus in short bursts to improve foreground behavior on Wayland WMs.
+          for (var i = 0; i < 4; i++) {
+            await windowManager.setAlwaysOnTop(true);
+            await windowManager.focus();
+            await Future<void>.delayed(const Duration(milliseconds: 90));
+            await windowManager.setAlwaysOnTop(false);
+            await Future<void>.delayed(const Duration(milliseconds: 50));
+          }
+          await windowManager.focus();
+        }
+      });
+    }
   }
 
   runApp(ZetSshApp(launchConfig: launchConfig));
@@ -165,7 +174,12 @@ class _TerminalPageState extends State<TerminalPage> {
     }
   }
 
-  bool get _useWindowManager => _isDesktop && !widget.launchConfig.isSubWindow;
+  bool get _useWindowManager {
+    if (!_isDesktop) return false;
+    // On Linux sub-windows, we avoid window_manager to prevent engine conflicts.
+    if (Platform.isLinux && widget.launchConfig.isSubWindow) return false;
+    return true;
+  }
 
   @override
   void initState() {
