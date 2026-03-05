@@ -61,8 +61,11 @@ static void my_application_activate(GApplication* application) {
   }
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
+  // For subwindow Flutter engines, avoid re-registering window_manager plugin.
+  // Registering window_manager in multiple engines causes:
+  // "AttachMainWindow : main window already exists."
   desktop_multi_window_plugin_set_window_created_callback(
-      [](FlPluginRegistry* registry) { fl_register_plugins(registry); });
+      [](FlPluginRegistry* registry) { (void)registry; });
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }

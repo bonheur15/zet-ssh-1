@@ -40,8 +40,9 @@
 - Inter-window `focus_window` method calls are retried after creation to improve Wayland foreground behavior.
 - Shell startup starts after first frame to reduce perceived startup delay.
 - Linux runner now sets `desktop_multi_window_plugin_set_window_created_callback(...)`
-  to call `fl_register_plugins(registry)` for each subwindow engine (fixes
-  `MissingPluginException`/black subwindows for plugins like `window_manager`).
+  and explicitly avoids re-registering `window_manager` in subwindow engines.
+  Re-registering `window_manager` caused:
+  `AttachMainWindow : main window already exists`.
 - For multi-window subwindows, `window_manager` initialization is skipped to
   avoid `AttachMainWindow : main window already exists` conflicts; subwindow
   close/focus control uses `desktop_multi_window` window controller APIs.
