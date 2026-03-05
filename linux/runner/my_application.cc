@@ -31,6 +31,9 @@ static gboolean make_frameless_idle(gpointer user_data) {
 }
 
 static void force_frameless(GtkWindow* window) {
+  // Set type hint to DIALOG which sometimes helps Wayland compositors 
+  // respect the undecorated request more than NORMAL type.
+  gtk_window_set_type_hint(window, GDK_WINDOW_TYPE_HINT_DIALOG);
   gtk_window_set_decorated(window, FALSE);
 
   // Force GTK to use Client-Side Decorations by providing a HeaderBar,
@@ -111,6 +114,12 @@ static void my_application_activate(GApplication* application) {
           GtkWindow* window = GTK_WINDOW(toplevel);
 
           force_frameless(window);
+          g_idle_add(make_frameless_idle, window);
+
+          g_signal_connect(window, "realize", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
+            force_frameless(GTK_WINDOW(widget));
+            g_idle_add(make_frameless_idle, widget);
+          }), nullptr);
           
           g_signal_connect(window, "map", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
             force_frameless(GTK_WINDOW(widget));
