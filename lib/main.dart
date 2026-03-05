@@ -14,6 +14,8 @@ Future<void> main() async {
   if (_isDesktop) {
     await windowManager.ensureInitialized();
     await windowManager.setAsFrameless();
+    final forceStartupFocus =
+        Platform.environment['ZET_SSH_FORCE_FOCUS'] == '1';
     const options = WindowOptions(
       size: Size(1200, 760),
       minimumSize: Size(900, 560),
@@ -24,6 +26,11 @@ Future<void> main() async {
     await windowManager.waitUntilReadyToShow(options, () async {
       await windowManager.show();
       await windowManager.focus();
+      if (forceStartupFocus) {
+        await windowManager.setAlwaysOnTop(true);
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        await windowManager.setAlwaysOnTop(false);
+      }
     });
   }
 
@@ -260,7 +267,11 @@ class _TerminalPageState extends State<TerminalPage> {
         executablePath,
         const [],
         workingDirectory: cwd,
-        mode: ProcessStartMode.detached,
+        mode: ProcessStartMode.normal,
+        environment: {
+          ...Platform.environment,
+          'ZET_SSH_FORCE_FOCUS': '1',
+        },
       );
       unawaited(child.exitCode);
     } catch (_) {
