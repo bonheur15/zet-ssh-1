@@ -285,12 +285,6 @@ class _TerminalPageState extends State<TerminalPage> {
       if (_debugKeys) {
         _debug('spawned direct pid=${child.pid} cwd=$cwd');
       }
-
-      // KDE Wayland focus-stealing policy may keep the new window behind.
-      // Minimizing current window after spawn gives foreground to the new one.
-      if (_isKdeWaylandSession()) {
-        unawaited(windowManager.minimize());
-      }
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
@@ -310,15 +304,6 @@ class _TerminalPageState extends State<TerminalPage> {
 
     _cachedExecutablePath = executablePath;
     return executablePath;
-  }
-
-  bool _isKdeWaylandSession() {
-    if (!Platform.isLinux) return false;
-    final desktop =
-        (Platform.environment['XDG_CURRENT_DESKTOP'] ?? '').toLowerCase();
-    final sessionType =
-        (Platform.environment['XDG_SESSION_TYPE'] ?? '').toLowerCase();
-    return desktop.contains('kde') && sessionType == 'wayland';
   }
 
   @override

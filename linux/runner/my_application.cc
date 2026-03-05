@@ -14,6 +14,13 @@ struct _MyApplication {
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
 
+static gboolean focus_window_later(gpointer user_data) {
+  GtkWindow* window = GTK_WINDOW(user_data);
+  gtk_window_present(window);
+  gtk_window_set_keep_above(window, FALSE);
+  return G_SOURCE_REMOVE;
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -65,6 +72,14 @@ static void my_application_activate(GApplication* application) {
   // Show and present as early as possible; do not wait for first Flutter frame.
   gtk_widget_show(GTK_WIDGET(window));
   gtk_window_present(window);
+
+  const gchar* force_focus = g_getenv("ZET_SSH_FORCE_FOCUS");
+  if (force_focus != nullptr && g_strcmp0(force_focus, "1") == 0) {
+    gtk_window_set_keep_above(window, TRUE);
+    gtk_window_present(window);
+    // Let the compositor map first, then drop keep-above while re-presenting.
+    g_timeout_add(180, focus_window_later, window);
+  }
 
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
