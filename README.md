@@ -3,9 +3,7 @@
 A stripped-down, desktop-first Flutter terminal emulator.
 
 ## Target
-- Linux (primary)
-- macOS
-- Windows
+- Linux
 
 ## Run
 ```bash
