@@ -21,7 +21,10 @@ Future<void> main(List<String> args) async {
 
     if (!skipWindowManager) {
       await windowManager.ensureInitialized();
-      await windowManager.setAsFrameless();
+      
+      if (!Platform.isLinux) {
+        await windowManager.setAsFrameless();
+      }
       
       const options = WindowOptions(
         size: Size(1200, 760),

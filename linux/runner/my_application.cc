@@ -23,6 +23,13 @@ static gboolean focus_window_later(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+static gboolean make_frameless_idle(gpointer user_data) {
+  if (GTK_IS_WINDOW(user_data)) {
+    gtk_window_set_decorated(GTK_WINDOW(user_data), FALSE);
+  }
+  return G_SOURCE_REMOVE;
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -32,6 +39,17 @@ static void my_application_activate(GApplication* application) {
   // Force custom frameless chrome for all windows (main + multi-window).
   gtk_window_set_title(window, "zet-ssh");
   gtk_window_set_decorated(window, FALSE);
+
+  // Re-enforce undecorated status when window is mapped or shown.
+  g_signal_connect(window, "map", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
+    gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+    g_idle_add(make_frameless_idle, widget);
+  }), nullptr);
+  
+  g_signal_connect(window, "show", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
+    gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+    g_idle_add(make_frameless_idle, widget);
+  }), nullptr);
 
   gtk_window_set_default_size(window, 1280, 720);
 
@@ -77,8 +95,21 @@ static void my_application_activate(GApplication* application) {
         FlView* view = fl_plugin_registrar_get_view(desktop_multi_window_registrar);
         GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(view));
         if (GTK_IS_WINDOW(toplevel)) {
-          gtk_window_set_decorated(GTK_WINDOW(toplevel), FALSE);
-          gtk_window_set_default_size(GTK_WINDOW(toplevel), 1200, 760);
+          GtkWindow* window = GTK_WINDOW(toplevel);
+
+          gtk_window_set_decorated(window, FALSE);
+          
+          g_signal_connect(window, "map", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
+            gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+            g_idle_add(make_frameless_idle, widget);
+          }), nullptr);
+
+          g_signal_connect(window, "show", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
+            gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+            g_idle_add(make_frameless_idle, widget);
+          }), nullptr);
+
+          gtk_window_set_default_size(window, 1200, 760);
         }
       });
 
@@ -143,6 +174,9 @@ static void my_application_class_init(MyApplicationClass* klass) {
 static void my_application_init(MyApplication* self) {}
 
 MyApplication* my_application_new() {
+  // Force Client-Side Decorations (CSD) to ensure we can control the window frame.
+  g_setenv("GTK_CSD", "1", TRUE);
+
   // Set the program name to the application ID, which helps various systems
   // like GTK and desktop environments map this running application to its
   // corresponding .desktop file. This ensures better integration by allowing
