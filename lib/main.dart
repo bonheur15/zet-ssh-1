@@ -348,6 +348,9 @@ class _TerminalPageState extends State<TerminalPage> {
           'focus': true,
         }),
       );
+      await controller.setFrame(const Rect.fromLTWH(120, 120, 1200, 760));
+      await controller.center();
+      await controller.show();
 
       unawaited(() async {
         for (var i = 0; i < 5; i++) {

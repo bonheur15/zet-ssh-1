@@ -46,6 +46,8 @@
 - For multi-window subwindows, `window_manager` initialization is skipped to
   avoid `AttachMainWindow : main window already exists` conflicts; subwindow
   close/focus control uses `desktop_multi_window` window controller APIs.
+- Linux subwindow callback now forces undecorated GTK window chrome for each
+  multi-window-created window and applies default size.
 
 ## Remaining Risk
 - Wayland compositors can enforce focus-stealing prevention; true foreground activation is policy-limited.

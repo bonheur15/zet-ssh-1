@@ -64,8 +64,19 @@ static void my_application_activate(GApplication* application) {
   // For subwindow Flutter engines, avoid re-registering window_manager plugin.
   // Registering window_manager in multiple engines causes:
   // "AttachMainWindow : main window already exists."
+  // We still force frameless chrome for subwindows at creation time.
   desktop_multi_window_plugin_set_window_created_callback(
-      [](FlPluginRegistry* registry) { (void)registry; });
+      [](FlPluginRegistry* registry) {
+        g_autoptr(FlPluginRegistrar) desktop_multi_window_registrar =
+            fl_plugin_registry_get_registrar_for_plugin(
+                registry, "DesktopMultiWindowPlugin");
+        FlView* view = fl_plugin_registrar_get_view(desktop_multi_window_registrar);
+        GtkWidget* toplevel = gtk_widget_get_toplevel(GTK_WIDGET(view));
+        if (GTK_IS_WINDOW(toplevel)) {
+          gtk_window_set_decorated(GTK_WINDOW(toplevel), FALSE);
+          gtk_window_set_default_size(GTK_WINDOW(toplevel), 1200, 760);
+        }
+      });
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
 }
