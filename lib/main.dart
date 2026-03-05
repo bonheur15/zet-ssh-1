@@ -61,6 +61,28 @@ class ZetSshApp extends StatelessWidget {
   }
 }
 
+class _TerminalSession {
+  _TerminalSession({
+    required this.label,
+    required this.terminal,
+    required this.controller,
+    required this.pty,
+    required this.outputSub,
+  });
+
+  final String label;
+  final Terminal terminal;
+  final TerminalController controller;
+  final PseudoTerminal pty;
+  final StreamSubscription<String> outputSub;
+
+  Future<void> dispose() async {
+    await outputSub.cancel();
+    pty.kill();
+    controller.dispose();
+  }
+}
+
 class TerminalPage extends StatefulWidget {
   const TerminalPage({super.key});
 
@@ -72,35 +94,34 @@ class _TerminalPageState extends State<TerminalPage> {
   static const bool _debugFromDartDefine =
       bool.fromEnvironment('ZET_SSH_DEBUG_KEYS');
 
-  static bool get _debugKeys {
+  static bool get _debugEnabled {
     if (_debugFromDartDefine) return true;
     final env = Platform.environment['ZET_SSH_DEBUG_KEYS'];
     return env == '1' || env?.toLowerCase() == 'true';
   }
-  late final Terminal _terminal;
-  late final TerminalController _terminalController;
-  PseudoTerminal? _pty;
-  StreamSubscription<String>? _outputSub;
+
+  final List<_TerminalSession> _sessions = [];
+  int _activeIndex = 0;
   bool _bootFailed = false;
-  bool _filterLinuxBashNoise = false;
+  int _sessionCounter = 0;
 
   void _debug(String message) {
-    if (_debugKeys) {
+    if (_debugEnabled) {
       // ignore: avoid_print
       print('[zet-ssh] $message');
     }
   }
 
+  _TerminalSession? get _activeSession {
+    if (_sessions.isEmpty) return null;
+    if (_activeIndex < 0 || _activeIndex >= _sessions.length) return null;
+    return _sessions[_activeIndex];
+  }
+
   @override
   void initState() {
     super.initState();
-
-    _terminal = Terminal(
-      maxLines: 20000,
-    );
-    _terminalController = TerminalController();
-
-    _startShell();
+    _createSession(workingDirectory: Directory.current.path, activate: true);
   }
 
   String _resolveShell() {
@@ -121,18 +142,24 @@ class _TerminalPageState extends State<TerminalPage> {
     return const [];
   }
 
-  void _startShell() {
+  void _createSession({
+    required String workingDirectory,
+    required bool activate,
+  }) {
     try {
       final shell = _resolveShell();
       final shellArgs = _shellArgsFor(shell);
       final shellName = shell.split('/').last.toLowerCase();
-      _filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
-      _debug('starting shell=$shell args=$shellArgs cwd=${Directory.current.path}');
+      final filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
 
+      _debug('starting shell=$shell args=$shellArgs cwd=$workingDirectory');
+
+      final terminal = Terminal(maxLines: 20000);
+      final controller = TerminalController();
       final pty = PseudoTerminal.start(
         shell,
         shellArgs,
-        workingDirectory: Directory.current.path,
+        workingDirectory: workingDirectory,
         environment: {
           ...Platform.environment,
           'TERM': 'xterm-256color',
@@ -140,10 +167,9 @@ class _TerminalPageState extends State<TerminalPage> {
         },
       );
 
-      _pty = pty;
-
-      _outputSub = pty.out.listen((data) {
-        if (_filterLinuxBashNoise) {
+      final outputSub = pty.out.listen((raw) {
+        var data = raw;
+        if (filterLinuxBashNoise) {
           data = data
               .replaceAll(
                 RegExp(
@@ -151,57 +177,106 @@ class _TerminalPageState extends State<TerminalPage> {
                 ),
                 '',
               )
-              .replaceAll(
-                'bash: no job control in this shell\r\n',
-                '',
-              )
-              .replaceAll(
-                'bash: no job control in this shell\n',
-                '',
-              );
+              .replaceAll('bash: no job control in this shell\r\n', '')
+              .replaceAll('bash: no job control in this shell\n', '');
         }
-        _terminal.write(data);
+        terminal.write(data);
       });
 
-      _terminal.onOutput = (data) {
+      terminal.onOutput = (data) {
         _debug('terminal->pty bytes=${data.codeUnits}');
         pty.write(data);
       };
 
-      _terminal.onResize = (width, height, _, _) {
+      terminal.onResize = (width, height, _, _) {
         pty.resize(width, height);
       };
+
+      final session = _TerminalSession(
+        label: 'term ${++_sessionCounter}',
+        terminal: terminal,
+        controller: controller,
+        pty: pty,
+        outputSub: outputSub,
+      );
+
+      setState(() {
+        _sessions.add(session);
+        if (activate) {
+          _activeIndex = _sessions.length - 1;
+        }
+        _bootFailed = false;
+      });
     } catch (_) {
-      setState(() => _bootFailed = true);
+      if (_sessions.isEmpty) {
+        setState(() => _bootFailed = true);
+      }
     }
+  }
+
+  Future<String> _resolveWorkingDirectoryForNewSession() async {
+    final session = _activeSession;
+    if (session == null) return Directory.current.path;
+
+    if (Platform.isLinux) {
+      final pid = session.pty.pid;
+      if (pid != null) {
+        final procCwd = Link('/proc/$pid/cwd');
+        if (await procCwd.exists()) {
+          try {
+            return await procCwd.resolveSymbolicLinks();
+          } catch (_) {
+            return Directory.current.path;
+          }
+        }
+      }
+    }
+
+    return Directory.current.path;
+  }
+
+  Future<void> _openNewTerminalFromActiveDir() async {
+    final cwd = await _resolveWorkingDirectoryForNewSession();
+    _createSession(workingDirectory: cwd, activate: true);
   }
 
   @override
   void dispose() {
-    _outputSub?.cancel();
-    _pty?.kill();
-    _terminalController.dispose();
+    for (final session in _sessions) {
+      session.outputSub.cancel();
+      session.pty.kill();
+      session.controller.dispose();
+    }
     super.dispose();
   }
 
   Future<void> _copySelection() async {
-    final selection = _terminalController.selection;
+    final session = _activeSession;
+    if (session == null) return;
+
+    final selection = session.controller.selection;
     if (selection == null) return;
-    final text = _terminal.buffer.getText(selection);
+    final text = session.terminal.buffer.getText(selection);
     if (text.isEmpty) return;
     await Clipboard.setData(ClipboardData(text: text));
   }
 
   Future<void> _pasteClipboard() async {
+    final session = _activeSession;
+    if (session == null) return;
+
     final data = await Clipboard.getData(Clipboard.kTextPlain);
     final text = data?.text;
     if (text == null || text.isEmpty) return;
-    _terminal.paste(text);
-    _terminalController.clearSelection();
+    session.terminal.paste(text);
+    session.controller.clearSelection();
   }
 
   Future<void> _showContextMenu(Offset globalPosition) async {
-    final selection = _terminalController.selection;
+    final session = _activeSession;
+    if (session == null) return;
+
+    final selection = session.controller.selection;
     final copied = await showMenu<String>(
       context: context,
       position: RelativeRect.fromLTRB(
@@ -235,11 +310,11 @@ class _TerminalPageState extends State<TerminalPage> {
   Widget build(BuildContext context) {
     if (_bootFailed) {
       return const Scaffold(
-        body: Center(
-          child: Text('Failed to start shell process.'),
-        ),
+        body: Center(child: Text('Failed to start shell process.')),
       );
     }
+
+    final session = _activeSession;
 
     final content = Scaffold(
       backgroundColor: Colors.transparent,
@@ -280,91 +355,115 @@ class _TerminalPageState extends State<TerminalPage> {
                           : null,
                       onClose: _isDesktop ? windowManager.close : null,
                     ),
+                    _SessionTabs(
+                      sessions: _sessions,
+                      activeIndex: _activeIndex,
+                      onSelect: (index) {
+                        setState(() => _activeIndex = index);
+                      },
+                    ),
                     Expanded(
-                      child: TerminalView(
-                        _terminal,
-                        controller: _terminalController,
-                        backgroundOpacity: 0,
-                        autofocus: true,
-                        padding: const EdgeInsets.all(14),
-                        shortcuts: const {
-                          SingleActivator(
-                            LogicalKeyboardKey.keyC,
-                            control: true,
-                            shift: true,
-                          ): CopySelectionTextIntent.copy,
-                          SingleActivator(
-                            LogicalKeyboardKey.keyV,
-                            control: true,
-                            shift: true,
-                          ): PasteTextIntent(SelectionChangedCause.keyboard),
-                          SingleActivator(
-                            LogicalKeyboardKey.keyA,
-                            control: true,
-                          ): SelectAllTextIntent(SelectionChangedCause.keyboard),
-                        },
-                        onSecondaryTapDown: (details, _) {
-                          _showContextMenu(details.globalPosition);
-                        },
-                        onKeyEvent: (_, event) {
-                          final keys =
-                              HardwareKeyboard.instance.logicalKeysPressed;
-                          final ctrlPressed =
-                              keys.contains(LogicalKeyboardKey.controlLeft) ||
-                                  keys.contains(LogicalKeyboardKey.controlRight);
-                          final shiftPressed =
-                              keys.contains(LogicalKeyboardKey.shiftLeft) ||
-                                  keys.contains(LogicalKeyboardKey.shiftRight);
-                          final isCopyChordKey =
-                              event.logicalKey == LogicalKeyboardKey.keyC ||
-                                  event.logicalKey == LogicalKeyboardKey.copy;
+                      child: session == null
+                          ? const Center(child: CircularProgressIndicator())
+                          : TerminalView(
+                              session.terminal,
+                              controller: session.controller,
+                              backgroundOpacity: 0,
+                              autofocus: true,
+                              padding: const EdgeInsets.all(14),
+                              shortcuts: const {
+                                SingleActivator(
+                                  LogicalKeyboardKey.keyC,
+                                  control: true,
+                                  shift: true,
+                                ): CopySelectionTextIntent.copy,
+                                SingleActivator(
+                                  LogicalKeyboardKey.keyV,
+                                  control: true,
+                                  shift: true,
+                                ): PasteTextIntent(
+                                  SelectionChangedCause.keyboard,
+                                ),
+                                SingleActivator(
+                                  LogicalKeyboardKey.keyA,
+                                  control: true,
+                                ): SelectAllTextIntent(
+                                  SelectionChangedCause.keyboard,
+                                ),
+                              },
+                              onSecondaryTapDown: (details, _) {
+                                _showContextMenu(details.globalPosition);
+                              },
+                              onKeyEvent: (_, event) {
+                                final keys =
+                                    HardwareKeyboard.instance.logicalKeysPressed;
+                                final ctrlPressed =
+                                    keys.contains(LogicalKeyboardKey.controlLeft) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.controlRight,
+                                        );
+                                final shiftPressed =
+                                    keys.contains(LogicalKeyboardKey.shiftLeft) ||
+                                        keys.contains(
+                                          LogicalKeyboardKey.shiftRight,
+                                        );
 
-                          if (event is KeyDownEvent &&
-                              ctrlPressed &&
-                              !shiftPressed &&
-                              isCopyChordKey) {
-                            _debug(
-                              'Ctrl+C detected. key=${event.logicalKey.keyLabel} '
-                              'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
-                            );
-                            _pty?.write('\x03');
-                            _debug('sent ETX (0x03) to PTY');
-                            return KeyEventResult.handled;
-                          }
-                          if (event is KeyDownEvent) {
-                            _debug(
-                              'keyDown key=${event.logicalKey.keyLabel} '
-                              'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
-                            );
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        theme: const TerminalTheme(
-                          cursor: Color(0xFF47E6A1),
-                          selection: Color(0x553C7EEA),
-                          foreground: Color(0xFFD7E1F8),
-                          background: Color(0x00000000),
-                          black: Color(0xFF0D121D),
-                          red: Color(0xFFFF607A),
-                          green: Color(0xFF47E6A1),
-                          yellow: Color(0xFFFFD166),
-                          blue: Color(0xFF5EA5FF),
-                          magenta: Color(0xFFDD7CFF),
-                          cyan: Color(0xFF65E9FF),
-                          white: Color(0xFFE9EEFF),
-                          brightBlack: Color(0xFF55637D),
-                          brightRed: Color(0xFFFF8499),
-                          brightGreen: Color(0xFF78F2BE),
-                          brightYellow: Color(0xFFFFE08F),
-                          brightBlue: Color(0xFF8ABEFF),
-                          brightMagenta: Color(0xFFE7A0FF),
-                          brightCyan: Color(0xFF9EF2FF),
-                          brightWhite: Color(0xFFFFFFFF),
-                          searchHitBackground: Color(0xFF3C7EEA),
-                          searchHitBackgroundCurrent: Color(0xFF47E6A1),
-                          searchHitForeground: Color(0xFF08111F),
-                        ),
-                      ),
+                                if (event is KeyDownEvent &&
+                                    ctrlPressed &&
+                                    shiftPressed &&
+                                    event.logicalKey == LogicalKeyboardKey.keyN) {
+                                  _openNewTerminalFromActiveDir();
+                                  return KeyEventResult.handled;
+                                }
+
+                                final isCopyChordKey =
+                                    event.logicalKey == LogicalKeyboardKey.keyC ||
+                                        event.logicalKey ==
+                                            LogicalKeyboardKey.copy;
+
+                                if (event is KeyDownEvent &&
+                                    ctrlPressed &&
+                                    !shiftPressed &&
+                                    isCopyChordKey) {
+                                  session.pty.write('\x03');
+                                  return KeyEventResult.handled;
+                                }
+
+                                if (event is KeyDownEvent && _debugEnabled) {
+                                  _debug(
+                                    'keyDown key=${event.logicalKey.keyLabel} '
+                                    'logical=${event.logicalKey.debugName} '
+                                    'ctrl=$ctrlPressed shift=$shiftPressed',
+                                  );
+                                }
+                                return KeyEventResult.ignored;
+                              },
+                              theme: const TerminalTheme(
+                                cursor: Color(0xFF47E6A1),
+                                selection: Color(0x553C7EEA),
+                                foreground: Color(0xFFD7E1F8),
+                                background: Color(0x00000000),
+                                black: Color(0xFF0D121D),
+                                red: Color(0xFFFF607A),
+                                green: Color(0xFF47E6A1),
+                                yellow: Color(0xFFFFD166),
+                                blue: Color(0xFF5EA5FF),
+                                magenta: Color(0xFFDD7CFF),
+                                cyan: Color(0xFF65E9FF),
+                                white: Color(0xFFE9EEFF),
+                                brightBlack: Color(0xFF55637D),
+                                brightRed: Color(0xFFFF8499),
+                                brightGreen: Color(0xFF78F2BE),
+                                brightYellow: Color(0xFFFFE08F),
+                                brightBlue: Color(0xFF8ABEFF),
+                                brightMagenta: Color(0xFFE7A0FF),
+                                brightCyan: Color(0xFF9EF2FF),
+                                brightWhite: Color(0xFFFFFFFF),
+                                searchHitBackground: Color(0xFF3C7EEA),
+                                searchHitBackgroundCurrent: Color(0xFF47E6A1),
+                                searchHitForeground: Color(0xFF08111F),
+                              ),
+                            ),
                     ),
                   ],
                 ),
@@ -436,6 +535,63 @@ class _TopBar extends StatelessWidget {
   }
 }
 
+class _SessionTabs extends StatelessWidget {
+  const _SessionTabs({
+    required this.sessions,
+    required this.activeIndex,
+    required this.onSelect,
+  });
+
+  final List<_TerminalSession> sessions;
+  final int activeIndex;
+  final ValueChanged<int> onSelect;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 8),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF1B2B45))),
+        color: Color(0x220A1322),
+      ),
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        itemCount: sessions.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 8),
+        itemBuilder: (context, index) {
+          final active = index == activeIndex;
+          return GestureDetector(
+            onTap: () => onSelect(index),
+            child: AnimatedContainer(
+              duration: const Duration(milliseconds: 120),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: active ? const Color(0xFF163153) : const Color(0xFF0B1527),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: active
+                      ? const Color(0xFF3E86D5)
+                      : const Color(0xFF1F3350),
+                ),
+              ),
+              child: Text(
+                sessions[index].label,
+                style: TextStyle(
+                  color:
+                      active ? const Color(0xFFE8F1FF) : const Color(0xFF9FB1CC),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+}
+
 class _Dot extends StatelessWidget {
   const _Dot({
     required this.color,
@@ -450,11 +606,15 @@ class _Dot extends StatelessWidget {
     return MouseRegion(
       cursor: onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
       child: GestureDetector(
-        onTap: onTap,
+        onTap: onTap == null
+            ? null
+            : () {
+                onTap!.call();
+              },
         behavior: HitTestBehavior.opaque,
         child: Container(
-          width: 14,
-          height: 14,
+          width: 12,
+          height: 12,
           decoration: BoxDecoration(
             color: color,
             borderRadius: BorderRadius.circular(999),

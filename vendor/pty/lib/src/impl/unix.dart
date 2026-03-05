@@ -175,10 +175,8 @@ class PtyCoreUnix implements PtyCore {
     if (ret == -1) throw PtyException('ioctl(TIOCSWINSZ) failed.');
   }
 
-  // @override
-  // int get pid {
-  //   return _pid;
-  // }
+  @override
+  int get pid => _pid;
 
   @override
   void write(List<int> data) {

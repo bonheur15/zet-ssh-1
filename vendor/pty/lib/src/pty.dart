@@ -72,9 +72,9 @@ class PseudoTerminal {
     return _exitCode.future;
   }
 
-  // int get pid {
-  //   return _core.pid;
-  // }
+  int? get pid {
+    return _core.pid;
+  }
 
   void write(String input) {
     final data = utf8.encode(input);

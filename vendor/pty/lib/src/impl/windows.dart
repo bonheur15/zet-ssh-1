@@ -219,10 +219,8 @@ class PtyCoreWindows implements PtyCore {
     calloc.free(size);
   }
 
-  // @override
-  // int get pid {
-  //   return _hProcess;
-  // }
+  @override
+  int? get pid => null;
 
   @override
   void write(List<int> data) {
