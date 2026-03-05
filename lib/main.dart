@@ -83,6 +83,7 @@ class _TerminalPageState extends State<TerminalPage> {
   StreamSubscription<String>? _outputSub;
   bool _bootFailed = false;
   bool _filterLinuxBashNoise = false;
+  String? _cachedExecutablePath;
 
   void _debug(String message) {
     if (_debugKeys) {
@@ -253,13 +254,7 @@ class _TerminalPageState extends State<TerminalPage> {
     final cwd = await _resolveActiveWorkingDirectory();
 
     try {
-      String executablePath = Platform.resolvedExecutable;
-      if (Platform.isLinux) {
-        final selfExe = File('/proc/self/exe');
-        if (await selfExe.exists()) {
-          executablePath = await selfExe.resolveSymbolicLinks();
-        }
-      }
+      final executablePath = await _resolveSelfExecutablePath();
 
       final child = await Process.start(
         executablePath,
@@ -271,6 +266,22 @@ class _TerminalPageState extends State<TerminalPage> {
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
+  }
+
+  Future<String> _resolveSelfExecutablePath() async {
+    final cached = _cachedExecutablePath;
+    if (cached != null) return cached;
+
+    var executablePath = Platform.resolvedExecutable;
+    if (Platform.isLinux) {
+      final selfExe = File('/proc/self/exe');
+      if (await selfExe.exists()) {
+        executablePath = await selfExe.resolveSymbolicLinks();
+      }
+    }
+
+    _cachedExecutablePath = executablePath;
+    return executablePath;
   }
 
   @override
@@ -310,17 +321,27 @@ class _TerminalPageState extends State<TerminalPage> {
                 child: Column(
                   children: [
                     _TopBar(
-                      onMinimize: _isDesktop ? windowManager.minimize : null,
-                      onToggleMaximize: _isDesktop
-                          ? () async {
-                              if (await windowManager.isMaximized()) {
-                                await windowManager.unmaximize();
-                              } else {
-                                await windowManager.maximize();
-                              }
+                      onMinimize: _isDesktop
+                          ? () {
+                              unawaited(windowManager.minimize());
                             }
                           : null,
-                      onClose: _isDesktop ? windowManager.close : null,
+                      onToggleMaximize: _isDesktop
+                          ? () {
+                              unawaited(() async {
+                                if (await windowManager.isMaximized()) {
+                                  await windowManager.unmaximize();
+                                } else {
+                                  await windowManager.maximize();
+                                }
+                              }());
+                            }
+                          : null,
+                      onClose: _isDesktop
+                          ? () {
+                              unawaited(windowManager.close());
+                            }
+                          : null,
                     ),
                     Expanded(
                       child: TerminalView(
@@ -365,7 +386,7 @@ class _TerminalPageState extends State<TerminalPage> {
                               ctrlPressed &&
                               shiftPressed &&
                               event.logicalKey == LogicalKeyboardKey.keyN) {
-                            _openNewTerminalWindow();
+                            unawaited(_openNewTerminalWindow());
                             return KeyEventResult.handled;
                           }
 
@@ -435,47 +456,56 @@ class _TopBar extends StatelessWidget {
     this.onClose,
   });
 
-  final Future<void> Function()? onMinimize;
-  final Future<void> Function()? onToggleMaximize;
-  final Future<void> Function()? onClose;
+  final VoidCallback? onMinimize;
+  final VoidCallback? onToggleMaximize;
+  final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
-    return DragToMoveArea(
-      child: Container(
-        height: 34,
-        padding: const EdgeInsets.symmetric(horizontal: 12),
-        decoration: const BoxDecoration(
-          border: Border(bottom: BorderSide(color: Color(0xFF1B2B45))),
-          gradient: LinearGradient(
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-            colors: [Color(0xFF121C31), Color(0xFF0C1425)],
-          ),
+    return Container(
+      height: 34,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
+      decoration: const BoxDecoration(
+        border: Border(bottom: BorderSide(color: Color(0xFF1B2B45))),
+        gradient: LinearGradient(
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+          colors: [Color(0xFF121C31), Color(0xFF0C1425)],
         ),
-        child: Row(
-          children: [
-            _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
-            const SizedBox(width: 8),
-            _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
-            const SizedBox(width: 8),
-            _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
-            const SizedBox(width: 12),
-            const Expanded(
-              child: Text(
-                'zet-ssh terminal',
-                textAlign: TextAlign.center,
-                style: TextStyle(
-                  color: Color(0xFFA8B4CF),
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600,
-                  letterSpacing: 0.3,
+      ),
+      child: Stack(
+        children: [
+          const Positioned.fill(
+            child: DragToMoveArea(
+              child: SizedBox.expand(),
+            ),
+          ),
+          Row(
+            children: [
+              _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
+              const SizedBox(width: 8),
+              _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
+              const SizedBox(width: 8),
+              _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
+              const SizedBox(width: 12),
+              const Expanded(
+                child: IgnorePointer(
+                  child: Text(
+                    'zet-ssh terminal',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: Color(0xFFA8B4CF),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                      letterSpacing: 0.3,
+                    ),
+                  ),
                 ),
               ),
-            ),
-            const SizedBox(width: 56),
-          ],
-        ),
+              const SizedBox(width: 56),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -488,14 +518,14 @@ class _Dot extends StatelessWidget {
   });
 
   final Color color;
-  final Future<void> Function()? onTap;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
     return MouseRegion(
       cursor: onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
       child: GestureDetector(
-        onTap: onTap,
+        onTapDown: onTap == null ? null : (_) => onTap!(),
         behavior: HitTestBehavior.opaque,
         child: Container(
           width: 14,
