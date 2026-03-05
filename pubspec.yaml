@@ -13,6 +13,7 @@ dependencies:
   pty:
     path: vendor/pty
   window_manager: ^0.5.1
+  desktop_multi_window: ^0.2.1
 
 dev_dependencies:
   flutter_lints: ^6.0.0

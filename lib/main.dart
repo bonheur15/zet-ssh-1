@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -8,14 +10,14 @@ import 'package:pty/pty.dart';
 import 'package:window_manager/window_manager.dart';
 import 'package:xterm/xterm.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
+  final launchConfig = _LaunchConfig.fromArgs(args);
 
   if (_isDesktop) {
     await windowManager.ensureInitialized();
     await windowManager.setAsFrameless();
-    final forceStartupFocus =
-        Platform.environment['ZET_SSH_FORCE_FOCUS'] == '1';
+    final forceStartupFocus = launchConfig.forceStartupFocus;
     const options = WindowOptions(
       size: Size(1200, 760),
       minimumSize: Size(900, 560),
@@ -40,7 +42,7 @@ Future<void> main() async {
     });
   }
 
-  runApp(const ZetSshApp());
+  runApp(ZetSshApp(initialWorkingDirectory: launchConfig.initialWorkingDirectory));
 }
 
 const _desktopPlatforms = {
@@ -53,7 +55,12 @@ bool get _isDesktop =>
     !kIsWeb && _desktopPlatforms.contains(defaultTargetPlatform);
 
 class ZetSshApp extends StatelessWidget {
-  const ZetSshApp({super.key});
+  const ZetSshApp({
+    required this.initialWorkingDirectory,
+    super.key,
+  });
+
+  final String initialWorkingDirectory;
 
   @override
   Widget build(BuildContext context) {
@@ -69,13 +76,57 @@ class ZetSshApp extends StatelessWidget {
           surface: Color(0xFF0B101D),
         ),
       ),
-      home: const TerminalPage(),
+      home: TerminalPage(initialWorkingDirectory: initialWorkingDirectory),
+    );
+  }
+}
+
+class _LaunchConfig {
+  const _LaunchConfig({
+    required this.initialWorkingDirectory,
+    required this.forceStartupFocus,
+  });
+
+  final String initialWorkingDirectory;
+  final bool forceStartupFocus;
+
+  static _LaunchConfig fromArgs(List<String> args) {
+    var cwd = Directory.current.path;
+    var focus = false;
+
+    if (args.length >= 3 && args[0] == 'multi_window') {
+      try {
+        final raw = args[2];
+        final decoded = jsonDecode(raw);
+        if (decoded is Map<String, dynamic>) {
+          final argCwd = decoded['cwd'];
+          final argFocus = decoded['focus'];
+          if (argCwd is String && argCwd.isNotEmpty) {
+            cwd = argCwd;
+          }
+          if (argFocus is bool) {
+            focus = argFocus;
+          }
+        }
+      } catch (_) {
+        // ignore malformed window arguments
+      }
+    }
+
+    return _LaunchConfig(
+      initialWorkingDirectory: cwd,
+      forceStartupFocus: focus,
     );
   }
 }
 
 class TerminalPage extends StatefulWidget {
-  const TerminalPage({super.key});
+  const TerminalPage({
+    required this.initialWorkingDirectory,
+    super.key,
+  });
+
+  final String initialWorkingDirectory;
 
   @override
   State<TerminalPage> createState() => _TerminalPageState();
@@ -96,7 +147,6 @@ class _TerminalPageState extends State<TerminalPage> {
   StreamSubscription<String>? _outputSub;
   bool _bootFailed = false;
   bool _filterLinuxBashNoise = false;
-  String? _cachedExecutablePath;
 
   void _debug(String message) {
     if (_debugKeys) {
@@ -113,6 +163,12 @@ class _TerminalPageState extends State<TerminalPage> {
       maxLines: 20000,
     );
     _terminalController = TerminalController();
+    DesktopMultiWindow.setMethodHandler((call, _) async {
+      if (call.method == 'focus_window') {
+        await _focusThisWindow();
+      }
+      return null;
+    });
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) {
@@ -145,12 +201,14 @@ class _TerminalPageState extends State<TerminalPage> {
       final shellArgs = _shellArgsFor(shell);
       final shellName = shell.split('/').last.toLowerCase();
       _filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
-      _debug('starting shell=$shell args=$shellArgs cwd=${Directory.current.path}');
+      _debug(
+        'starting shell=$shell args=$shellArgs cwd=${widget.initialWorkingDirectory}',
+      );
 
       final pty = PseudoTerminal.start(
         shell,
         shellArgs,
-        workingDirectory: Directory.current.path,
+        workingDirectory: widget.initialWorkingDirectory,
         environment: {
           ...Platform.environment,
           'TERM': 'xterm-256color',
@@ -199,6 +257,7 @@ class _TerminalPageState extends State<TerminalPage> {
     _outputSub?.cancel();
     _pty?.kill();
     _terminalController.dispose();
+    DesktopMultiWindow.setMethodHandler(null);
     super.dispose();
   }
 
@@ -264,46 +323,50 @@ class _TerminalPageState extends State<TerminalPage> {
       }
     }
 
-    return Directory.current.path;
+    return widget.initialWorkingDirectory;
   }
 
   Future<void> _openNewTerminalWindow() async {
     final cwd = await _resolveActiveWorkingDirectory();
 
     try {
-      final executablePath = await _resolveSelfExecutablePath();
-
-      final child = await Process.start(
-        executablePath,
-        const [],
-        workingDirectory: cwd,
-        mode: ProcessStartMode.detached,
-        environment: {
-          'ZET_SSH_FORCE_FOCUS': '1',
-        },
+      final controller = await DesktopMultiWindow.createWindow(
+        jsonEncode(<String, dynamic>{
+          'cwd': cwd,
+          'focus': true,
+        }),
       );
+
+      await controller.setFrame(const Rect.fromLTWH(120, 120, 1200, 760));
+      await controller.show();
+      await controller.center();
+      unawaited(() async {
+        for (var i = 0; i < 4; i++) {
+          await Future<void>.delayed(Duration(milliseconds: 80 * (i + 1)));
+          await DesktopMultiWindow.invokeMethod(
+            controller.windowId,
+            'focus_window',
+          );
+        }
+      }());
+
       if (_debugKeys) {
-        _debug('spawned direct pid=${child.pid} cwd=$cwd');
+        _debug('spawned multi-window id=${controller.windowId} cwd=$cwd');
       }
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
   }
 
-  Future<String> _resolveSelfExecutablePath() async {
-    final cached = _cachedExecutablePath;
-    if (cached != null) return cached;
-
-    var executablePath = Platform.resolvedExecutable;
-    if (Platform.isLinux) {
-      final selfExe = File('/proc/self/exe');
-      if (await selfExe.exists()) {
-        executablePath = await selfExe.resolveSymbolicLinks();
-      }
+  Future<void> _focusThisWindow() async {
+    for (var i = 0; i < 4; i++) {
+      await windowManager.setAlwaysOnTop(true);
+      await windowManager.focus();
+      await Future<void>.delayed(const Duration(milliseconds: 70));
+      await windowManager.setAlwaysOnTop(false);
+      await Future<void>.delayed(const Duration(milliseconds: 40));
     }
-
-    _cachedExecutablePath = executablePath;
-    return executablePath;
+    await windowManager.focus();
   }
 
   @override

@@ -32,9 +32,13 @@
    - show/present window immediately instead of waiting first Flutter frame.
 6. Top bar control responsiveness/centering improvements.
 
-## Current Workaround Added
-- On KDE Wayland only, after spawning the new window, current window minimizes to hand off foreground to the new one.
-- Shell startup now starts after first frame to reduce perceived startup delay.
+## Current Implementation
+- `Ctrl+Shift+N` now uses in-process multi-window (`desktop_multi_window`) instead of launching a separate process.
+- New window receives startup args with:
+  - `cwd` (active terminal current directory)
+  - `focus=true`
+- Inter-window `focus_window` method calls are retried after creation to improve Wayland foreground behavior.
+- Shell startup starts after first frame to reduce perceived startup delay.
 
 ## Remaining Risk
 - Wayland compositors can enforce focus-stealing prevention; true foreground activation is policy-limited.
