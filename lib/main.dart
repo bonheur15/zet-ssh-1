@@ -337,12 +337,9 @@ class _TerminalPageState extends State<TerminalPage> {
         }),
       );
 
-      await controller.setFrame(const Rect.fromLTWH(120, 120, 1200, 760));
-      await controller.show();
-      await controller.center();
       unawaited(() async {
-        for (var i = 0; i < 4; i++) {
-          await Future<void>.delayed(Duration(milliseconds: 80 * (i + 1)));
+        for (var i = 0; i < 5; i++) {
+          await Future<void>.delayed(Duration(milliseconds: 120 * (i + 1)));
           await DesktopMultiWindow.invokeMethod(
             controller.windowId,
             'focus_window',
