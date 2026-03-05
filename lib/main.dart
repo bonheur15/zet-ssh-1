@@ -27,14 +27,15 @@ Future<void> main() async {
       await windowManager.show();
       await windowManager.focus();
       if (forceStartupFocus) {
-        // Retry focus in short bursts to improve foreground behavior on Linux WMs.
-        for (var i = 0; i < 3; i++) {
+        // Retry focus in short bursts to improve foreground behavior on Wayland WMs.
+        for (var i = 0; i < 4; i++) {
           await windowManager.setAlwaysOnTop(true);
           await windowManager.focus();
-          await Future<void>.delayed(const Duration(milliseconds: 60));
+          await Future<void>.delayed(const Duration(milliseconds: 90));
           await windowManager.setAlwaysOnTop(false);
-          await Future<void>.delayed(const Duration(milliseconds: 40));
+          await Future<void>.delayed(const Duration(milliseconds: 50));
         }
+        await windowManager.focus();
       }
     });
   }
@@ -267,24 +268,6 @@ class _TerminalPageState extends State<TerminalPage> {
 
     try {
       final executablePath = await _resolveSelfExecutablePath();
-      final isKdeWayland = _isKdeWaylandSession();
-
-      if (isKdeWayland && await File('/usr/bin/kstart5').exists()) {
-        final child = await Process.start(
-          '/usr/bin/kstart5',
-          [executablePath],
-          workingDirectory: cwd,
-          mode: ProcessStartMode.detached,
-          environment: {
-            ...Platform.environment,
-            'ZET_SSH_FORCE_FOCUS': '1',
-          },
-        );
-        if (_debugKeys) {
-          _debug('spawned via kstart5 pid=${child.pid} cwd=$cwd');
-        }
-        return;
-      }
 
       final child = await Process.start(
         executablePath,
@@ -296,20 +279,11 @@ class _TerminalPageState extends State<TerminalPage> {
         },
       );
       if (_debugKeys) {
-        _debug('spawned new window pid=${child.pid} cwd=$cwd');
+        _debug('spawned direct pid=${child.pid} cwd=$cwd');
       }
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
-  }
-
-  bool _isKdeWaylandSession() {
-    if (!Platform.isLinux) return false;
-    final desktop = (Platform.environment['XDG_CURRENT_DESKTOP'] ?? '')
-        .toLowerCase();
-    final sessionType = (Platform.environment['XDG_SESSION_TYPE'] ?? '')
-        .toLowerCase();
-    return desktop.contains('kde') && sessionType == 'wayland';
   }
 
   Future<String> _resolveSelfExecutablePath() async {
