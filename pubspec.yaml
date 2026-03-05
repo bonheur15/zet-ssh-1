@@ -10,7 +10,8 @@ dependencies:
   flutter:
     sdk: flutter
   xterm: ^4.0.0
-  pty: ^0.1.1
+  pty:
+    path: vendor/pty
   window_manager: ^0.5.1
 
 dev_dependencies:
