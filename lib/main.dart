@@ -69,12 +69,27 @@ class TerminalPage extends StatefulWidget {
 }
 
 class _TerminalPageState extends State<TerminalPage> {
+  static const bool _debugFromDartDefine =
+      bool.fromEnvironment('ZET_SSH_DEBUG_KEYS');
+
+  static bool get _debugKeys {
+    if (_debugFromDartDefine) return true;
+    final env = Platform.environment['ZET_SSH_DEBUG_KEYS'];
+    return env == '1' || env?.toLowerCase() == 'true';
+  }
   late final Terminal _terminal;
   late final TerminalController _terminalController;
   PseudoTerminal? _pty;
   StreamSubscription<String>? _outputSub;
   bool _bootFailed = false;
   bool _filterLinuxBashNoise = false;
+
+  void _debug(String message) {
+    if (_debugKeys) {
+      // ignore: avoid_print
+      print('[zet-ssh] $message');
+    }
+  }
 
   @override
   void initState() {
@@ -112,6 +127,7 @@ class _TerminalPageState extends State<TerminalPage> {
       final shellArgs = _shellArgsFor(shell);
       final shellName = shell.split('/').last.toLowerCase();
       _filterLinuxBashNoise = Platform.isLinux && shellName.contains('bash');
+      _debug('starting shell=$shell args=$shellArgs cwd=${Directory.current.path}');
 
       final pty = PseudoTerminal.start(
         shell,
@@ -148,6 +164,7 @@ class _TerminalPageState extends State<TerminalPage> {
       });
 
       _terminal.onOutput = (data) {
+        _debug('terminal->pty bytes=${data.codeUnits}');
         pty.write(data);
       };
 
@@ -290,12 +307,35 @@ class _TerminalPageState extends State<TerminalPage> {
                           _showContextMenu(details.globalPosition);
                         },
                         onKeyEvent: (_, event) {
+                          final keys =
+                              HardwareKeyboard.instance.logicalKeysPressed;
+                          final ctrlPressed =
+                              keys.contains(LogicalKeyboardKey.controlLeft) ||
+                                  keys.contains(LogicalKeyboardKey.controlRight);
+                          final shiftPressed =
+                              keys.contains(LogicalKeyboardKey.shiftLeft) ||
+                                  keys.contains(LogicalKeyboardKey.shiftRight);
+                          final isCopyChordKey =
+                              event.logicalKey == LogicalKeyboardKey.keyC ||
+                                  event.logicalKey == LogicalKeyboardKey.copy;
+
                           if (event is KeyDownEvent &&
-                              HardwareKeyboard.instance.isControlPressed &&
-                              !HardwareKeyboard.instance.isShiftPressed &&
-                              event.logicalKey == LogicalKeyboardKey.keyC) {
-                            _terminal.charInput('c'.codeUnitAt(0), ctrl: true);
+                              ctrlPressed &&
+                              !shiftPressed &&
+                              isCopyChordKey) {
+                            _debug(
+                              'Ctrl+C detected. key=${event.logicalKey.keyLabel} '
+                              'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
+                            );
+                            _pty?.write('\x03');
+                            _debug('sent ETX (0x03) to PTY');
                             return KeyEventResult.handled;
+                          }
+                          if (event is KeyDownEvent) {
+                            _debug(
+                              'keyDown key=${event.logicalKey.keyLabel} '
+                              'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
+                            );
                           }
                           return KeyEventResult.ignored;
                         },

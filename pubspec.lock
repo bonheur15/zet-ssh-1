@@ -129,10 +129,9 @@ packages:
   pty:
     dependency: "direct main"
     description:
-      name: pty
-      sha256: "231dc69a743086f32c52225027021aeb9d86b38dd83ca12466a43f060c2ad487"
-      url: "https://pub.dev"
-    source: hosted
+      path: "vendor/pty"
+      relative: true
+    source: path
     version: "0.1.1"
   quiver:
     dependency: transitive
