@@ -1,14 +1,43 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:pty/pty.dart';
+import 'package:window_manager/window_manager.dart';
 import 'package:xterm/xterm.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  if (_isDesktop) {
+    await windowManager.ensureInitialized();
+    await windowManager.setAsFrameless();
+    const options = WindowOptions(
+      size: Size(1200, 760),
+      minimumSize: Size(900, 560),
+      center: true,
+      backgroundColor: Colors.transparent,
+      title: 'zet-ssh terminal',
+    );
+    await windowManager.waitUntilReadyToShow(options, () async {
+      await windowManager.show();
+      await windowManager.focus();
+    });
+  }
+
   runApp(const ZetSshApp());
 }
+
+const _desktopPlatforms = {
+  TargetPlatform.windows,
+  TargetPlatform.linux,
+  TargetPlatform.macOS,
+};
+
+bool get _isDesktop =>
+    !kIsWeb && _desktopPlatforms.contains(defaultTargetPlatform);
 
 class ZetSshApp extends StatelessWidget {
   const ZetSshApp({super.key});
@@ -41,6 +70,7 @@ class TerminalPage extends StatefulWidget {
 
 class _TerminalPageState extends State<TerminalPage> {
   late final Terminal _terminal;
+  late final TerminalController _terminalController;
   PseudoTerminal? _pty;
   StreamSubscription<String>? _outputSub;
   bool _bootFailed = false;
@@ -52,6 +82,7 @@ class _TerminalPageState extends State<TerminalPage> {
     _terminal = Terminal(
       maxLines: 20000,
     );
+    _terminalController = TerminalController();
 
     _startShell();
   }
@@ -94,7 +125,55 @@ class _TerminalPageState extends State<TerminalPage> {
   void dispose() {
     _outputSub?.cancel();
     _pty?.kill();
+    _terminalController.dispose();
     super.dispose();
+  }
+
+  Future<void> _copySelection() async {
+    final selection = _terminalController.selection;
+    if (selection == null) return;
+    final text = _terminal.buffer.getText(selection);
+    if (text.isEmpty) return;
+    await Clipboard.setData(ClipboardData(text: text));
+  }
+
+  Future<void> _pasteClipboard() async {
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    final text = data?.text;
+    if (text == null || text.isEmpty) return;
+    _terminal.paste(text);
+    _terminalController.clearSelection();
+  }
+
+  Future<void> _showContextMenu(Offset globalPosition) async {
+    final selection = _terminalController.selection;
+    final copied = await showMenu<String>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        globalPosition.dx,
+        globalPosition.dy,
+        globalPosition.dx,
+        globalPosition.dy,
+      ),
+      color: const Color(0xFF0F1A2E),
+      items: [
+        PopupMenuItem(
+          value: 'copy',
+          enabled: selection != null,
+          child: const Text('Copy'),
+        ),
+        const PopupMenuItem(
+          value: 'paste',
+          child: Text('Paste'),
+        ),
+      ],
+    );
+
+    if (copied == 'copy') {
+      await _copySelection();
+    } else if (copied == 'paste') {
+      await _pasteClipboard();
+    }
   }
 
   @override
@@ -107,7 +186,7 @@ class _TerminalPageState extends State<TerminalPage> {
       );
     }
 
-    return Scaffold(
+    final content = Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -132,13 +211,45 @@ class _TerminalPageState extends State<TerminalPage> {
                 ),
                 child: Column(
                   children: [
-                    const _TopBar(),
+                    _TopBar(
+                      onMinimize: _isDesktop ? windowManager.minimize : null,
+                      onToggleMaximize: _isDesktop
+                          ? () async {
+                              if (await windowManager.isMaximized()) {
+                                await windowManager.unmaximize();
+                              } else {
+                                await windowManager.maximize();
+                              }
+                            }
+                          : null,
+                      onClose: _isDesktop ? windowManager.close : null,
+                    ),
                     Expanded(
                       child: TerminalView(
                         _terminal,
+                        controller: _terminalController,
                         backgroundOpacity: 0,
                         autofocus: true,
                         padding: const EdgeInsets.all(14),
+                        shortcuts: const {
+                          SingleActivator(
+                            LogicalKeyboardKey.keyC,
+                            control: true,
+                            shift: true,
+                          ): CopySelectionTextIntent.copy,
+                          SingleActivator(
+                            LogicalKeyboardKey.keyV,
+                            control: true,
+                            shift: true,
+                          ): PasteTextIntent(SelectionChangedCause.keyboard),
+                          SingleActivator(
+                            LogicalKeyboardKey.keyA,
+                            control: true,
+                          ): SelectAllTextIntent(SelectionChangedCause.keyboard),
+                        },
+                        onSecondaryTapDown: (details, _) {
+                          _showContextMenu(details.globalPosition);
+                        },
                         theme: const TerminalTheme(
                           cursor: Color(0xFF47E6A1),
                           selection: Color(0x553C7EEA),
@@ -174,11 +285,25 @@ class _TerminalPageState extends State<TerminalPage> {
         ),
       ),
     );
+
+    if (_isDesktop) {
+      return DragToResizeArea(child: content);
+    }
+
+    return content;
   }
 }
 
 class _TopBar extends StatelessWidget {
-  const _TopBar();
+  const _TopBar({
+    this.onMinimize,
+    this.onToggleMaximize,
+    this.onClose,
+  });
+
+  final Future<void> Function()? onMinimize;
+  final Future<void> Function()? onToggleMaximize;
+  final Future<void> Function()? onClose;
 
   @override
   Widget build(BuildContext context) {
@@ -193,21 +318,28 @@ class _TopBar extends StatelessWidget {
           colors: [Color(0xFF121C31), Color(0xFF0C1425)],
         ),
       ),
-      child: const Row(
+      child: Row(
         children: [
-          _Dot(color: Color(0xFFFF6B6B)),
+          _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
           SizedBox(width: 8),
-          _Dot(color: Color(0xFFFFC75F)),
+          _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
           SizedBox(width: 8),
-          _Dot(color: Color(0xFF47E6A1)),
+          _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
           Spacer(),
-          Text(
-            'zet-ssh terminal',
-            style: TextStyle(
-              color: Color(0xFFA8B4CF),
-              fontSize: 13,
-              fontWeight: FontWeight.w600,
-              letterSpacing: 0.4,
+          Expanded(
+            child: DragToMoveArea(
+              child: Container(
+                alignment: Alignment.center,
+                child: const Text(
+                  'zet-ssh terminal',
+                  style: TextStyle(
+                    color: Color(0xFFA8B4CF),
+                    fontSize: 13,
+                    fontWeight: FontWeight.w600,
+                    letterSpacing: 0.4,
+                  ),
+                ),
+              ),
             ),
           ),
           Spacer(),
@@ -219,19 +351,32 @@ class _TopBar extends StatelessWidget {
 }
 
 class _Dot extends StatelessWidget {
-  const _Dot({required this.color});
+  const _Dot({
+    required this.color,
+    this.onTap,
+  });
 
   final Color color;
+  final Future<void> Function()? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      width: 10,
-      height: 10,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(999),
-        boxShadow: [BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 6)],
+    return MouseRegion(
+      cursor: onTap != null ? SystemMouseCursors.click : MouseCursor.defer,
+      child: GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: Container(
+          width: 14,
+          height: 14,
+          decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(999),
+            boxShadow: [
+              BoxShadow(color: color.withValues(alpha: 0.45), blurRadius: 6),
+            ],
+          ),
+        ),
       ),
     );
   }
