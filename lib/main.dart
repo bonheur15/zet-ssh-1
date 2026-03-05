@@ -21,17 +21,14 @@ Future<void> main(List<String> args) async {
 
     if (!skipWindowManager) {
       await windowManager.ensureInitialized();
-      
-      if (!Platform.isLinux) {
-        await windowManager.setAsFrameless();
-      }
+      await windowManager.setAsFrameless();
       
       const options = WindowOptions(
         size: Size(1200, 760),
         minimumSize: Size(900, 560),
         center: true,
         backgroundColor: Colors.transparent,
-        title: 'zet-ssh terminal',
+        title: '',
         titleBarStyle: TitleBarStyle.hidden,
       );
 
@@ -78,7 +75,7 @@ class ZetSshApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'zet-ssh terminal',
+      title: _isDesktop ? '' : 'zet-ssh terminal',
       theme: ThemeData(
         useMaterial3: true,
         brightness: Brightness.dark,
@@ -439,136 +436,143 @@ class _TerminalPageState extends State<TerminalPage> {
                     colors: [Color(0xFF0E1728), Color(0xFF090F1B)],
                   ),
                 ),
-                child: Column(
-                  children: [
-                    _TopBar(
-                      draggable: _useWindowManager,
-                      onMinimize: _useWindowManager
-                          ? () {
-                              unawaited(windowManager.minimize());
-                            }
-                          : null,
-                      onToggleMaximize: _useWindowManager
-                          ? () {
-                              unawaited(() async {
-                                if (await windowManager.isMaximized()) {
-                                  await windowManager.unmaximize();
-                                } else {
-                                  await windowManager.maximize();
+                child: LayoutBuilder(
+                  builder: (context, constraints) {
+                    if (constraints.maxWidth < 10 || constraints.maxHeight < 10) {
+                      return const SizedBox.expand();
+                    }
+                    return Column(
+                      children: [
+                        _TopBar(
+                          draggable: _useWindowManager,
+                          onMinimize: _useWindowManager
+                              ? () {
+                                  unawaited(windowManager.minimize());
                                 }
-                              }());
-                            }
-                          : null,
-                      onClose: () {
-                        unawaited(() async {
-                          if (_useWindowManager) {
-                            await windowManager.close();
-                          } else if (widget.launchConfig.windowId > 0) {
-                            await WindowController.fromWindowId(
-                              widget.launchConfig.windowId,
-                            ).close();
-                          }
-                        }());
-                      },
-                    ),
-                    Expanded(
-                      child: LayoutBuilder(
-                        builder: (context, constraints) {
-                          if (constraints.maxWidth < 80 ||
-                              constraints.maxHeight < 80) {
-                            return const SizedBox.expand();
-                          }
-                          return TerminalView(
-                        _terminal,
-                        controller: _terminalController,
-                        backgroundOpacity: 0,
-                        autofocus: true,
-                        padding: const EdgeInsets.all(14),
-                        shortcuts: const {
-                          SingleActivator(
-                            LogicalKeyboardKey.keyC,
-                            control: true,
-                            shift: true,
-                          ): CopySelectionTextIntent.copy,
-                          SingleActivator(
-                            LogicalKeyboardKey.keyV,
-                            control: true,
-                            shift: true,
-                          ): PasteTextIntent(SelectionChangedCause.keyboard),
-                          SingleActivator(
-                            LogicalKeyboardKey.keyA,
-                            control: true,
-                          ): SelectAllTextIntent(SelectionChangedCause.keyboard),
-                        },
-                        onSecondaryTapDown: (details, _) {
-                          _showContextMenu(details.globalPosition);
-                        },
-                        onKeyEvent: (_, event) {
-                          final keys =
-                              HardwareKeyboard.instance.logicalKeysPressed;
-                          final ctrlPressed =
-                              keys.contains(LogicalKeyboardKey.controlLeft) ||
-                                  keys.contains(LogicalKeyboardKey.controlRight);
-                          final shiftPressed =
-                              keys.contains(LogicalKeyboardKey.shiftLeft) ||
-                                  keys.contains(LogicalKeyboardKey.shiftRight);
-                          final isCopyChordKey =
-                              event.logicalKey == LogicalKeyboardKey.keyC ||
-                                  event.logicalKey == LogicalKeyboardKey.copy;
-
-                          if (event is KeyDownEvent &&
-                              ctrlPressed &&
-                              shiftPressed &&
-                              event.logicalKey == LogicalKeyboardKey.keyN) {
-                            unawaited(_openNewTerminalWindow());
-                            return KeyEventResult.handled;
-                          }
-
-                          if (event is KeyDownEvent &&
-                              ctrlPressed &&
-                              !shiftPressed &&
-                              isCopyChordKey) {
-                            _pty?.write('\x03');
-                            return KeyEventResult.handled;
-                          }
-                          if (event is KeyDownEvent) {
-                            _debug(
-                              'keyDown key=${event.logicalKey.keyLabel} '
-                              'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
-                            );
-                          }
-                          return KeyEventResult.ignored;
-                        },
-                        theme: const TerminalTheme(
-                          cursor: Color(0xFF47E6A1),
-                          selection: Color(0x553C7EEA),
-                          foreground: Color(0xFFD7E1F8),
-                          background: Color(0x00000000),
-                          black: Color(0xFF0D121D),
-                          red: Color(0xFFFF607A),
-                          green: Color(0xFF47E6A1),
-                          yellow: Color(0xFFFFD166),
-                          blue: Color(0xFF5EA5FF),
-                          magenta: Color(0xFFDD7CFF),
-                          cyan: Color(0xFF65E9FF),
-                          white: Color(0xFFE9EEFF),
-                          brightBlack: Color(0xFF55637D),
-                          brightRed: Color(0xFFFF8499),
-                          brightGreen: Color(0xFF78F2BE),
-                          brightYellow: Color(0xFFFFE08F),
-                          brightBlue: Color(0xFF8ABEFF),
-                          brightMagenta: Color(0xFFE7A0FF),
-                          brightCyan: Color(0xFF9EF2FF),
-                          brightWhite: Color(0xFFFFFFFF),
-                          searchHitBackground: Color(0xFF3C7EEA),
-                          searchHitBackgroundCurrent: Color(0xFF47E6A1),
-                          searchHitForeground: Color(0xFF08111F),
+                              : null,
+                          onToggleMaximize: _useWindowManager
+                              ? () {
+                                  unawaited(() async {
+                                    if (await windowManager.isMaximized()) {
+                                      await windowManager.unmaximize();
+                                    } else {
+                                      await windowManager.maximize();
+                                    }
+                                  }());
+                                }
+                              : null,
+                          onClose: () {
+                            unawaited(() async {
+                              if (_useWindowManager) {
+                                await windowManager.close();
+                              } else if (widget.launchConfig.windowId > 0) {
+                                await WindowController.fromWindowId(
+                                  widget.launchConfig.windowId,
+                                ).close();
+                              }
+                            }());
+                          },
                         ),
-                          );
-                        },
-                      ),
-                    ),
-                  ],
+                        Expanded(
+                          child: LayoutBuilder(
+                            builder: (context, constraints) {
+                              if (constraints.maxWidth < 80 ||
+                                  constraints.maxHeight < 80) {
+                                return const SizedBox.expand();
+                              }
+                              return TerminalView(
+                                _terminal,
+                                controller: _terminalController,
+                                backgroundOpacity: 0,
+                                autofocus: true,
+                                padding: const EdgeInsets.all(14),
+                                shortcuts: const {
+                                  SingleActivator(
+                                    LogicalKeyboardKey.keyC,
+                                    control: true,
+                                    shift: true,
+                                  ): CopySelectionTextIntent.copy,
+                                  SingleActivator(
+                                    LogicalKeyboardKey.keyV,
+                                    control: true,
+                                    shift: true,
+                                  ): PasteTextIntent(SelectionChangedCause.keyboard),
+                                  SingleActivator(
+                                    LogicalKeyboardKey.keyA,
+                                    control: true,
+                                  ): SelectAllTextIntent(SelectionChangedCause.keyboard),
+                                },
+                                onSecondaryTapDown: (details, _) {
+                                  _showContextMenu(details.globalPosition);
+                                },
+                                onKeyEvent: (_, event) {
+                                  final keys =
+                                      HardwareKeyboard.instance.logicalKeysPressed;
+                                  final ctrlPressed =
+                                      keys.contains(LogicalKeyboardKey.controlLeft) ||
+                                          keys.contains(LogicalKeyboardKey.controlRight);
+                                  final shiftPressed =
+                                      keys.contains(LogicalKeyboardKey.shiftLeft) ||
+                                          keys.contains(LogicalKeyboardKey.shiftRight);
+                                  final isCopyChordKey =
+                                      event.logicalKey == LogicalKeyboardKey.keyC ||
+                                          event.logicalKey == LogicalKeyboardKey.copy;
+
+                                  if (event is KeyDownEvent &&
+                                      ctrlPressed &&
+                                      shiftPressed &&
+                                      event.logicalKey == LogicalKeyboardKey.keyN) {
+                                    unawaited(_openNewTerminalWindow());
+                                    return KeyEventResult.handled;
+                                  }
+
+                                  if (event is KeyDownEvent &&
+                                      ctrlPressed &&
+                                      !shiftPressed &&
+                                      isCopyChordKey) {
+                                    _pty?.write('\x03');
+                                    return KeyEventResult.handled;
+                                  }
+                                  if (event is KeyDownEvent) {
+                                    _debug(
+                                      'keyDown key=${event.logicalKey.keyLabel} '
+                                      'logical=${event.logicalKey.debugName} ctrl=$ctrlPressed shift=$shiftPressed',
+                                    );
+                                  }
+                                  return KeyEventResult.ignored;
+                                },
+                                theme: const TerminalTheme(
+                                  cursor: Color(0xFF47E6A1),
+                                  selection: Color(0x553C7EEA),
+                                  foreground: Color(0xFFD7E1F8),
+                                  background: Color(0x00000000),
+                                  black: Color(0xFF0D121D),
+                                  red: Color(0xFFFF607A),
+                                  green: Color(0xFF47E6A1),
+                                  yellow: Color(0xFFFFD166),
+                                  blue: Color(0xFF5EA5FF),
+                                  magenta: Color(0xFFDD7CFF),
+                                  cyan: Color(0xFF65E9FF),
+                                  white: Color(0xFFE9EEFF),
+                                  brightBlack: Color(0xFF55637D),
+                                  brightRed: Color(0xFFFF8499),
+                                  brightGreen: Color(0xFF78F2BE),
+                                  brightYellow: Color(0xFFFFE08F),
+                                  brightBlue: Color(0xFF8ABEFF),
+                                  brightMagenta: Color(0xFFE7A0FF),
+                                  brightCyan: Color(0xFF9EF2FF),
+                                  brightWhite: Color(0xFFFFFFFF),
+                                  searchHitBackground: Color(0xFF3C7EEA),
+                                  searchHitBackgroundCurrent: Color(0xFF47E6A1),
+                                  searchHitForeground: Color(0xFF08111F),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                      ],
+                    );
+                  },
                 ),
               ),
             ),

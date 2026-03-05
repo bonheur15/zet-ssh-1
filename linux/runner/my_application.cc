@@ -30,6 +30,19 @@ static gboolean make_frameless_idle(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
+static void force_frameless(GtkWindow* window) {
+  gtk_window_set_decorated(window, FALSE);
+
+  // Force GTK to use Client-Side Decorations by providing a HeaderBar,
+  // then hiding it. This MUST be called before the window is realized.
+  if (!gtk_widget_get_realized(GTK_WIDGET(window))) {
+    GtkWidget* header_bar = gtk_header_bar_new();
+    gtk_widget_show(header_bar);
+    gtk_window_set_titlebar(window, header_bar);
+    gtk_widget_hide(header_bar);
+  }
+}
+
 // Implements GApplication::activate.
 static void my_application_activate(GApplication* application) {
   MyApplication* self = MY_APPLICATION(application);
@@ -37,17 +50,17 @@ static void my_application_activate(GApplication* application) {
       GTK_WINDOW(gtk_application_window_new(GTK_APPLICATION(application)));
 
   // Force custom frameless chrome for all windows (main + multi-window).
-  gtk_window_set_title(window, "zet-ssh");
-  gtk_window_set_decorated(window, FALSE);
+  gtk_window_set_title(window, "");
+  force_frameless(window);
 
   // Re-enforce undecorated status when window is mapped or shown.
   g_signal_connect(window, "map", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
-    gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+    force_frameless(GTK_WINDOW(widget));
     g_idle_add(make_frameless_idle, widget);
   }), nullptr);
   
   g_signal_connect(window, "show", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
-    gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+    force_frameless(GTK_WINDOW(widget));
     g_idle_add(make_frameless_idle, widget);
   }), nullptr);
 
@@ -97,15 +110,15 @@ static void my_application_activate(GApplication* application) {
         if (GTK_IS_WINDOW(toplevel)) {
           GtkWindow* window = GTK_WINDOW(toplevel);
 
-          gtk_window_set_decorated(window, FALSE);
+          force_frameless(window);
           
           g_signal_connect(window, "map", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
-            gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+            force_frameless(GTK_WINDOW(widget));
             g_idle_add(make_frameless_idle, widget);
           }), nullptr);
 
           g_signal_connect(window, "show", G_CALLBACK(+[](GtkWidget* widget, gpointer data) {
-            gtk_window_set_decorated(GTK_WINDOW(widget), FALSE);
+            force_frameless(GTK_WINDOW(widget));
             g_idle_add(make_frameless_idle, widget);
           }), nullptr);
 
@@ -174,9 +187,6 @@ static void my_application_class_init(MyApplicationClass* klass) {
 static void my_application_init(MyApplication* self) {}
 
 MyApplication* my_application_new() {
-  // Force Client-Side Decorations (CSD) to ensure we can control the window frame.
-  g_setenv("GTK_CSD", "1", TRUE);
-
   // Set the program name to the application ID, which helps various systems
   // like GTK and desktop environments map this running application to its
   // corresponding .desktop file. This ensures better integration by allowing
