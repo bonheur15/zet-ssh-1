@@ -27,9 +27,14 @@ Future<void> main() async {
       await windowManager.show();
       await windowManager.focus();
       if (forceStartupFocus) {
-        await windowManager.setAlwaysOnTop(true);
-        await Future<void>.delayed(const Duration(milliseconds: 120));
-        await windowManager.setAlwaysOnTop(false);
+        // Retry focus in short bursts to improve foreground behavior on Linux WMs.
+        for (var i = 0; i < 3; i++) {
+          await windowManager.setAlwaysOnTop(true);
+          await windowManager.focus();
+          await Future<void>.delayed(const Duration(milliseconds: 60));
+          await windowManager.setAlwaysOnTop(false);
+          await Future<void>.delayed(const Duration(milliseconds: 40));
+        }
       }
     });
   }
@@ -267,13 +272,14 @@ class _TerminalPageState extends State<TerminalPage> {
         executablePath,
         const [],
         workingDirectory: cwd,
-        mode: ProcessStartMode.normal,
+        mode: ProcessStartMode.detached,
         environment: {
-          ...Platform.environment,
           'ZET_SSH_FORCE_FOCUS': '1',
         },
       );
-      unawaited(child.exitCode);
+      if (_debugKeys) {
+        _debug('spawned new window pid=${child.pid} cwd=$cwd');
+      }
     } catch (_) {
       // no-op: keep terminal stable even if spawning fails
     }
@@ -491,30 +497,33 @@ class _TopBar extends StatelessWidget {
               child: SizedBox.expand(),
             ),
           ),
-          Row(
-            children: [
-              _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
-              const SizedBox(width: 8),
-              _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
-              const SizedBox(width: 8),
-              _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
-              const SizedBox(width: 12),
-              const Expanded(
-                child: IgnorePointer(
-                  child: Text(
-                    'zet-ssh terminal',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                      color: Color(0xFFA8B4CF),
-                      fontSize: 12,
-                      fontWeight: FontWeight.w600,
-                      letterSpacing: 0.3,
+          Positioned.fill(
+            child: Row(
+              children: [
+                _Dot(color: const Color(0xFFFFC75F), onTap: onMinimize),
+                const SizedBox(width: 8),
+                _Dot(color: const Color(0xFF47E6A1), onTap: onToggleMaximize),
+                const SizedBox(width: 8),
+                _Dot(color: const Color(0xFFFF6B6B), onTap: onClose),
+                const SizedBox(width: 12),
+                const Expanded(
+                  child: IgnorePointer(
+                    child: Text(
+                      'zet-ssh terminal',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: Color(0xFFA8B4CF),
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600,
+                        letterSpacing: 0.3,
+                        height: 1.0,
+                      ),
                     ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 56),
-            ],
+                const SizedBox(width: 56),
+              ],
+            ),
           ),
         ],
       ),
